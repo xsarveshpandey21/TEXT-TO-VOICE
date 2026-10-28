@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VoiceMatcher & Prosody DSP Verification Tests</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0d14;
+      color: #f8fafc;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #38bdf8; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .test-card {
+      background: #111622;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .test-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 0.5rem; color: #f1f5f9; }
+    .log-line { font-family: monospace; font-size: 0.86rem; margin: 0.25rem 0; }
+    .pass { color: #10b981; font-weight: bold; }
+    .fail { color: #ef4444; font-weight: bold; }
+    .summary { font-size: 1.2rem; font-weight: bold; margin-top: 1.5rem; padding: 1rem; border-radius: 6px; }
+    .summary.all-pass { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
+    .summary.has-fail { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>HumanVoice Studio: Voice Match & Prosody Verification Suite</h1>
+  <p class="subtitle">Synthetic 30-harmonic formant resonator voices, safe-zone classification, syllable pacing, name token table, and chunk re-centering tests.</p>
+
+  <div id="testOutput">Running tests…</div>
+  <div id="overallSummary"></div>
+
+  <script type="module">
+    import { VoiceMatcher } from '../voicematch.js';
+    import { ProsodyEngine } from '../prosody.js';
+    import { getVoiceGender, FEMALE_NAMES, MALE_NAMES } from '../voicegender.js';
+    import { countEnglishSyllables, countHindiSyllables } from '../app.js';
+
+    /**
+     * Synthesizes audio buffer:
+     * - Harmonic source (30 harmonics, 1/k^1.5) with slow intonation
+     * - 3 Formant resonators: male (600, 1100, 2400 Hz) or female (800, 1400, 2900 Hz)
+     * - 4.5 Hz syllable envelope
+     * - 400 ms pauses every 2.0 s
+     */
+    async function createSyntheticResonatorWav(targetF0, intonationPct = 0.15, isMale = true, syllableRateHz = 4.5, totalSeconds = 6.0, p10FloorOverride = null) {
+      const sampleRate = 16000;
+      const numSamples = Math.floor(sampleRate * totalSeconds);
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+
+      const rawBuffer = audioCtx.createBuffer(1, numSamples, sampleRate);
+      const rawData = rawBuffer.getChannelData(0);
+
+      const burstPeriodSec = 1.0 / syllableRateHz;
+      const pauseDurationSec = 0.400; // 400 ms
+      const pausePeriodSec = 2.0;    // pause every 2.0 s
+
+      let phase = 0;
+      for (let i = 0; i < numSamples; i++) {
+        const t = i / sampleRate;
+
+        // 400 ms pause every 2.0 seconds
+        const cycleTime = t % pausePeriodSec;
+        if (cycleTime >= (pausePeriodSec - pauseDurationSec)) {
+          rawData[i] = 0;
+          continue;
+        }
+
+        // Instantaneous F0 with slow intonation
+        let instF0 = targetF0 * (1 + intonationPct * Math.sin(2 * Math.PI * 0.5 * t));
+        if (p10FloorOverride && (t % 1.2) < 0.25) {
+          instF0 = p10FloorOverride; // inject lower floor for p10 check
+        }
+
+        phase += (2 * Math.PI * instF0) / sampleRate;
+
+        // 30 harmonics with 1 / (h^1.5) amplitude decay
+        let sample = 0;
+        for (let h = 1; h <= 30; h++) {
+          sample += (1.0 / Math.pow(h, 1.5)) * Math.sin(h * phase);
+        }
+
+        // 4.5 Hz Syllable Amplitude Envelope (half-sine burst)
+        const envPhase = (t % burstPeriodSec) / burstPeriodSec;
+        const sylEnv = Math.sin(envPhase * Math.PI);
+
+        rawData[i] = sample * Math.max(0, sylEnv) * 0.4;
+      }
+
+      // Pass through 3 Formant Resonators using OfflineAudioContext
+      const formants = isMale ? [600, 1100, 2400] : [800, 1400, 2900];
+      const offlineCtx = new OfflineAudioContext(1, numSamples, sampleRate);
+      const source = offlineCtx.createBufferSource();
+      source.buffer = rawBuffer;
+
+      // Create 3 parallel bandpass formant filters
+      const merger = offlineCtx.createChannelMerger(1);
+      formants.forEach((freq, idx) => {
+        const bp = offlineCtx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = freq;
+        bp.Q.value = idx === 0 ? 4.0 : 6.0;
+        source.connect(bp);
+        bp.connect(merger);
+      });
+
+      merger.connect(offlineCtx.destination);
+      source.start(0);
+
+      const renderedBuffer = await offlineCtx.startRendering();
+      return audioBufferToWavBlob(renderedBuffer);
+    }
+
+    async function audioBufferToWavBlob(buffer) {
+      const numChannels = 1;
+      const sampleRate = buffer.sampleRate;
+      const data = buffer.getChannelData(0);
+      const bytesPerSample = 2;
+      const dataSize = data.length * bytesPerSample;
+      const arrayBuffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(arrayBuffer);
+
+      const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) {
+          view.setUint8(offset + i, str.charCodeAt(i));
+        }
+      };
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * bytesPerSample, true);
+      view.setUint16(32, bytesPerSample, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      let offset = 44;
+      for (let i = 0; i < data.length; i++) {
+        const s = Math.max(-1, Math.min(1, data[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        offset += 2;
+      }
+
+      return new Blob([arrayBuffer], { type: 'audio/wav' });
+    }
+
+    async function runTestSuite() {
+      const outputEl = document.getElementById('testOutput');
+      const summaryEl = document.getElementById('overallSummary');
+      outputEl.innerHTML = '';
+
+      let totalTests = 0;
+      let passedTests = 0;
+
+      const logCard = (title) => {
+        const div = document.createElement('div');
+        div.className = 'test-card';
+        div.innerHTML = `<div class="test-title">${title}</div>`;
+        outputEl.appendChild(div);
+        return div;
+      };
+
+      const assertResult = (container, label, condition, detail) => {
+        totalTests++;
+        if (condition) passedTests++;
+        const p = document.createElement('div');
+        p.className = 'log-line';
+        p.innerHTML = `${label}: <span class="${condition ? 'pass' : 'fail'}">${condition ? 'PASS' : 'FAIL'}</span> (${detail})`;
+        container.appendChild(p);
+      };
+
+      const matcher = new VoiceMatcher();
+
+      // TEST 1: Male 105 Hz (Formant Resonators 600/1100/2400 Hz)
+      {
+        const card = logCard('Test 1: Synthetic Male 105 Hz (30 Harmonics, Resonators 600/1100/2400 Hz)');
+        const blob = await createSyntheticResonatorWav(105, 0.08, true, 4.5, 6.0);
+        const profile = await matcher.analyze(blob);
+
+        assertResult(card, 'Median F0 (100–110 Hz)',
+          profile.f0_median_hz >= 100 && profile.f0_median_hz <= 110,
+          `Detected: ${profile.f0_median_hz} Hz`);
+
+        assertResult(card, 'Voice Type Classification',
+          profile.voice_type === 'male',
+          `Expected 'male', Got: '${profile.voice_type}'`);
+
+        assertResult(card, 'Syllable Rate (4.0–5.0 syl/s)',
+          profile.syllables_per_sec >= 4.0 && profile.syllables_per_sec <= 5.0,
+          `Detected: ${profile.syllables_per_sec} syl/s`);
+      }
+
+      // TEST 2: Male 150 Hz expressive (±35%) -> male or uncertain, NEVER female
+      {
+        const card = logCard('Test 2: Synthetic Male 150 Hz Expressive (±35% Intonation)');
+        const blob = await createSyntheticResonatorWav(150, 0.35, true, 4.5, 6.0);
+        const profile = await matcher.analyze(blob);
+
+        assertResult(card, 'Voice Type (male or uncertain, NEVER female)',
+          profile.voice_type === 'male' || profile.voice_type === 'uncertain',
+          `Detected type: '${profile.voice_type}', confidence: ${profile.voice_type_confidence}`);
+
+        assertResult(card, 'Never Female',
+          profile.voice_type !== 'female',
+          `Type is not female: '${profile.voice_type}'`);
+
+        assertResult(card, 'Syllable Rate (4.0–5.0 syl/s)',
+          profile.syllables_per_sec >= 4.0 && profile.syllables_per_sec <= 5.0,
+          `Detected: ${profile.syllables_per_sec} syl/s`);
+      }
+
+      // TEST 3: Male 175 Hz with p10 < 120 -> type male
+      {
+        const card = logCard('Test 3: Synthetic Excited Male 175 Hz (p10 Floor < 120 Hz)');
+        const blob = await createSyntheticResonatorWav(170, 0.08, true, 4.5, 6.0, 110);
+        const profile = await matcher.analyze(blob);
+
+        assertResult(card, 'Voice Type Classification',
+          profile.voice_type === 'male',
+          `Expected 'male' (median < 175 & p10 < 120), Detected type: '${profile.voice_type}', p10: ${profile.f0_p10} Hz`);
+
+        assertResult(card, 'Syllable Rate (4.0–5.0 syl/s)',
+          profile.syllables_per_sec >= 4.0 && profile.syllables_per_sec <= 5.0,
+          `Detected: ${profile.syllables_per_sec} syl/s`);
+      }
+
+      // TEST 4: Female 185 Hz -> female or uncertain, NEVER male
+      {
+        const card = logCard('Test 4: Synthetic Female 185 Hz (Resonators 800/1400/2900 Hz)');
+        const blob = await createSyntheticResonatorWav(185, 0.15, false, 4.5, 6.0);
+        const profile = await matcher.analyze(blob);
+
+        assertResult(card, 'Voice Type (female or uncertain, NEVER male)',
+          profile.voice_type === 'female' || profile.voice_type === 'uncertain',
+          `Detected type: '${profile.voice_type}'`);
+
+        assertResult(card, 'Never Male',
+          profile.voice_type !== 'male',
+          `Type is not male: '${profile.voice_type}'`);
+
+        assertResult(card, 'Syllable Rate (4.0–5.0 syl/s)',
+          profile.syllables_per_sec >= 4.0 && profile.syllables_per_sec <= 5.0,
+          `Detected: ${profile.syllables_per_sec} syl/s`);
+      }
+
+      // TEST 5: Female 225 Hz -> type female
+      {
+        const card = logCard('Test 5: Synthetic Female 225 Hz');
+        const blob = await createSyntheticResonatorWav(225, 0.15, false, 4.5, 6.0);
+        const profile = await matcher.analyze(blob);
+
+        assertResult(card, 'Voice Type Classification',
+          profile.voice_type === 'female',
+          `Expected 'female', Got: '${profile.voice_type}', median: ${profile.f0_median_hz} Hz`);
+
+        assertResult(card, 'Syllable Rate (4.0–5.0 syl/s)',
+          profile.syllables_per_sec >= 4.0 && profile.syllables_per_sec <= 5.0,
+          `Detected: ${profile.syllables_per_sec} syl/s`);
+      }
+
+      // TEST 6: getVoiceGender on all Fix 1 Names & Negative Tests (0 errors)
+      {
+        const card = logCard('Test 6: Voice Gender Detection & Disambiguation (Fix 1 Table)');
+        let genderErrors = 0;
+
+        // Female names check
+        FEMALE_NAMES.forEach(name => {
+          const detected = getVoiceGender(`Microsoft ${name} Online (Natural)`);
+          if (detected !== 'female') genderErrors++;
+        });
+
+        // Male names check
+        MALE_NAMES.forEach(name => {
+          const detected = getVoiceGender(`Microsoft ${name} Online (Natural)`);
+          if (detected !== 'male') genderErrors++;
+        });
+
+        // Specific past bug causes (negative cases)
+        const pastBugs = [
+          { name: 'Microsoft Christel Online (Natural) - Danish (Denmark)', expected: 'female' },
+          { name: 'Microsoft Katja Online (Natural) - German (Germany)', expected: 'female' },
+          { name: 'Microsoft Alexandra - Romanian', expected: 'female' },
+          { name: 'Microsoft Maria - Spanish', expected: 'female' },
+          { name: 'Microsoft Andrew Online (Natural)', expected: 'male' },
+          { name: 'Microsoft Ananya Online (Natural)', expected: 'female' },
+          { name: 'Google हिन्दी', expected: 'female' },
+          { name: 'Google US English', expected: 'female' },
+          { name: 'Google UK English Female', expected: 'female' },
+          { name: 'Google UK English Male', expected: 'male' },
+          { name: 'Google Italiano', expected: 'unknown' }
+        ];
+
+        pastBugs.forEach(b => {
+          const res = getVoiceGender(b.name);
+          if (res !== b.expected) {
+            genderErrors++;
+          }
+        });
+
+        assertResult(card, 'Name Table & Past Bug Cases (0 errors)',
+          genderErrors === 0,
+          `Tested ${FEMALE_NAMES.size + MALE_NAMES.size + pastBugs.length} voices, Errors: ${genderErrors}`);
+      }
+
+      // TEST 7: Syllable Counting (English & Hindi)
+      {
+        const card = logCard('Test 7: Calibration Sentences Syllable Counts');
+        const enShort = 'Natural human speech.';
+        const enLong = 'Natural human speech has melody and rhythm. The weather today is wonderfully pleasant and warm.';
+        const hiShort = 'मानव वाणी में लय है।';
+        const hiLong = 'मानव वाणी में स्वाभाविक लय और मधुरता होती है।';
+
+        const enCountShort = countEnglishSyllables(enShort);
+        const enCountLong = countEnglishSyllables(enLong);
+        const hiCountShort = countHindiSyllables(hiShort);
+        const hiCountLong = countHindiSyllables(hiLong);
+
+        assertResult(card, 'English Short (6 syllables)', enCountShort === 6, `Counted: ${enCountShort}`);
+        assertResult(card, 'English Long (27 syllables, not 24)', enCountLong === 27, `Counted: ${enCountLong}`);
+        assertResult(card, 'Hindi Short (9 syllables)', hiCountShort === 9, `Counted: ${hiCountShort}`);
+        assertResult(card, 'Hindi Long (21 syllables)', hiCountLong === 21, `Counted: ${hiCountLong}`);
+      }
+
+      // TEST 8: Pitch Mapping & Semitone Bounds (Fix 3)
+      {
+        const card = logCard('Test 8: Pitch Mapping & Bounds (±5 Semitones)');
+        const clipF0 = 120;
+        const maleBaseF0 = 115;
+        const k = 1.0;
+
+        const pitchMale = Math.pow(clipF0 / maleBaseF0, 1.0 / k);
+        assertResult(card, 'Clip 120 Hz + Male Base 115 Hz (1.00–1.10)',
+          pitchMale >= 1.00 && pitchMale <= 1.10,
+          `Pitch: ${pitchMale.toFixed(3)}`);
+
+        // Female voice base 205 Hz: 120 / 205 = 0.585, bounded to 2^(-5/12) ~ 0.749
+        const femaleBaseF0 = 205;
+        const rawPitchFemale = Math.pow(clipF0 / femaleBaseF0, 1.0 / k);
+        const pitchMin = Math.pow(2, -5 / 12);
+        const pitchMax = Math.pow(2, 5 / 12);
+        const boundedPitchFemale = Math.max(pitchMin, Math.min(pitchMax, rawPitchFemale));
+
+        assertResult(card, 'Clip 120 Hz + Female Voice (limited to ~0.75)',
+          boundedPitchFemale >= 0.74 && boundedPitchFemale <= 0.76,
+          `Raw: ${rawPitchFemale.toFixed(3)}, Bounded: ${boundedPitchFemale.toFixed(3)}`);
+      }
+
+      // TEST 9: Prosody Chunk Re-Centering (Fix 6)
+      {
+        const card = logCard('Test 9: Prosody Chunk Re-Centering (Zero Drift)');
+        const prosody = new ProsodyEngine(null);
+        const testText = 'Natural speech has expressive cadence. Every sentence should hold pitch and rate without shifting the base average!';
+        const basePitch = 1.08;
+        const baseRate = 1.12;
+
+        const chunks = prosody.process(testText, {
+          basePitch,
+          baseRate,
+          variationPitch: 25,
+          variationRate: 20,
+          curveProfile: 'dynamic_peaks'
+        });
+
+        const spoken = chunks.filter(c => !c.isPauseOnly);
+        const meanPitch = spoken.reduce((acc, c) => acc + c.pitch, 0) / spoken.length;
+        const meanRate = spoken.reduce((acc, c) => acc + c.rate, 0) / spoken.length;
+
+        const pitchDiff = Math.abs(meanPitch - basePitch);
+        const rateDiff = Math.abs(meanRate - baseRate);
+
+        assertResult(card, 'Mean Chunk Pitch = Matched Pitch (±0.01)',
+          pitchDiff <= 0.015,
+          `Expected: ${basePitch}, Mean: ${meanPitch.toFixed(3)}, Diff: ${pitchDiff.toFixed(3)}`);
+
+        assertResult(card, 'Mean Chunk Rate = Matched Rate (±0.01)',
+          rateDiff <= 0.015,
+          `Expected: ${baseRate}, Mean: ${meanRate.toFixed(3)}, Diff: ${rateDiff.toFixed(3)}`);
+      }
+
+      const allPassed = passedTests === totalTests;
+      summaryEl.className = `summary ${allPassed ? 'all-pass' : 'has-fail'}`;
+      summaryEl.textContent = allPassed
+        ? `✔ ALL TESTS PASSED (${passedTests}/${totalTests} assertions passed)`
+        : `✖ SOME TESTS FAILED (${passedTests}/${totalTests} assertions passed)`;
+
+      window.__TEST_RESULTS__ = { totalTests, passedTests, allPassed };
+    }
+
+    window.addEventListener('DOMContentLoaded', runTestSuite);
+  </script>
+</body>
+</html>

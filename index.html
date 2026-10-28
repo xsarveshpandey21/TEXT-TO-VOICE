@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HumanVoice Studio - Natural Text-to-Speech Voice Modulator</title>
+  <meta name="description" content="Expressive browser text-to-speech with fine prosody engineering, pitch declination, emotional presets, and natural cadence.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+      <div class="header-branding">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" x2="12" y1="19" y2="22"/>
+            <line x1="8" x2="16" y1="22" y2="22"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">HumanVoice <span class="brand-badge">Studio</span></h1>
+          <p class="brand-subtitle">Natural Browser Voice Modulator & Prosody Engine</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- Tab Audio Recording (Browser Web Speech fallback) -->
+        <button id="recordBtn" class="btn btn-secondary" title="Capture audio output via browser tab sharing">
+          <span class="record-dot"></span>
+          <span>Record Tab Audio</span>
+        </button>
+        <span id="recordStatusBadge" class="badge badge-recording" style="display: none;">● Recording</span>
+
+        <!-- Config Export/Import -->
+        <button id="openConfigBtn" class="btn btn-icon" title="Import / Export Settings" aria-label="Settings configuration">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+
+        <!-- Theme Toggle -->
+        <button id="themeToggleBtn" class="btn btn-icon" title="Toggle Light / Dark Theme" aria-label="Toggle theme">
+          <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Grid -->
+    <main class="app-main">
+      <!-- Left Column: Text Input, Markup Bar, Visualizers, and Playback Card -->
+      <section class="studio-left-col">
+        <!-- Text Editor Card -->
+        <div class="card editor-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">✍️</span>
+              <h2 class="card-title">Speech Text & Markup</h2>
+            </div>
+            <div class="editor-quick-tools">
+              <button id="pasteTextBtn" class="btn-tool" title="Paste from clipboard">📋 Paste</button>
+              <button id="autoPausesBtn" class="btn-tool" title="Insert [pause 400] after punctuation">⏱️ Auto Pauses</button>
+              <button id="clearTextBtn" class="btn-tool" title="Clear text area">🗑️ Clear</button>
+            </div>
+          </div>
+
+          <!-- Samples Bar -->
+          <div class="samples-bar">
+            <span class="samples-label">Quick Samples:</span>
+            <button class="btn-pill" data-sample="story">📖 Story</button>
+            <button class="btn-pill" data-sample="dialogue">💬 Multi-Speaker</button>
+            <button class="btn-pill" data-sample="inflection">⚡ Emotion Inflection</button>
+            <button class="btn-pill" data-sample="markup">🏷️ Inline Markup</button>
+          </div>
+
+          <!-- Inline Markup Quick Inserters -->
+          <div class="markup-bar" aria-label="Inline markup shortcuts">
+            <span class="markup-label">Inline Markup:</span>
+            <button class="btn-tag" data-markup="emphasis" title="Emphasize selected text">*emphasis*</button>
+            <button class="btn-tag" data-markup="pause" title="Insert exact millisecond pause">[pause 500]</button>
+            <button class="btn-tag" data-markup="pitch_up" title="Raise pitch for next sentence">[pitch +0.2]</button>
+            <button class="btn-tag" data-markup="pitch_down" title="Lower pitch for next sentence">[pitch -0.2]</button>
+            <button class="btn-tag" data-markup="rate_fast" title="Speed up for next sentence">[rate +0.2]</button>
+            <button class="btn-tag" data-markup="rate_slow" title="Slow down for next sentence">[rate -0.2]</button>
+          </div>
+
+          <!-- Textarea -->
+          <div class="textarea-wrapper">
+            <textarea id="textInput" class="speech-textarea" rows="6" spellcheck="false" placeholder="Enter text to speak. Use *asterisks* for emphasis, [pause 500] for timed pauses, or select a sample above...">Welcome to *HumanVoice Studio*! Did you know that natural human speech isn't flat?
+[pause 400]
+When we ask a question, our voice naturally rises at the end!
+And when we get excited, our pitch leaps higher and our tempo accelerates!
+Sometimes... we take a slow, meditative breath. Let's make synthetic speech feel genuinely alive.</textarea>
+          </div>
+
+          <!-- Editor Footer: Counters and Duration -->
+          <div class="editor-footer">
+            <div class="stats-group">
+              <span id="charCountBadge" class="stat-badge">0 chars</span>
+              <span id="wordCountBadge" class="stat-badge">0 words</span>
+              <span id="durationBadge" class="stat-badge stat-duration">~0s</span>
+            </div>
+            <div class="shortcut-tip">
+              <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to Speak &nbsp;|&nbsp; <kbd>Space</kbd> Pause &nbsp;|&nbsp; <kbd>Esc</kbd> Stop
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Visualizers Card: Waveform + Prosody Curve -->
+        <div class="card visualizer-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">📊</span>
+              <h2 class="card-title">Live Prosody & Waveform Feedback</h2>
+            </div>
+            <div class="prosody-legend">
+              <span class="legend-item"><span class="legend-dot dot-pitch"></span> Pitch</span>
+              <span class="legend-item"><span class="legend-dot dot-rate"></span> Speed</span>
+            </div>
+          </div>
+
+          <!-- Waveform Speaking Indicator -->
+          <div class="canvas-container waveform-wrap">
+            <canvas id="waveformCanvas" height="50"></canvas>
+          </div>
+
+          <!-- Planned Prosody Curve Canvas -->
+          <div class="canvas-container prosody-wrap">
+            <canvas id="prosodyCanvas" height="110"></canvas>
+          </div>
+        </div>
+
+        <!-- Playback Navigation & Sentence Highlighting Card -->
+        <div class="card playback-card">
+          <div class="playback-controls-row">
+            <div class="primary-buttons">
+              <button id="speakBtn" class="btn btn-primary btn-large">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <span>Speak</span>
+              </button>
+              <button id="pauseBtn" class="btn btn-warning btn-large" style="display: none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16"/>
+                  <rect x="14" y="4" width="4" height="16"/>
+                </svg>
+                <span>Pause</span>
+              </button>
+              <button id="resumeBtn" class="btn btn-success btn-large" style="display: none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <span>Resume</span>
+              </button>
+              <button id="stopBtn" class="btn btn-secondary" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16"/>
+                </svg>
+                <span>Stop</span>
+              </button>
+            </div>
+
+            <!-- Sentence Stepper -->
+            <div class="sentence-stepper">
+              <button id="prevSentenceBtn" class="btn btn-icon" title="Previous Sentence">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="15 18 9 12 15 6"/>
+                </svg>
+              </button>
+              <span class="stepper-label">Sentence Jump</span>
+              <button id="nextSentenceBtn" class="btn btn-icon" title="Next Sentence">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="9 18 15 12 9 6"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Status Bar -->
+          <div class="status-bar">
+            <span class="status-dot"></span>
+            <span id="statusText" class="status-text ready">Ready to speak.</span>
+          </div>
+
+          <!-- Highlight Cards Container -->
+          <div id="playbackCardsContainer" class="playback-cards-container">
+            <div class="playback-empty">Text chunks will be highlighted here in real-time as they are spoken.</div>
+          </div>
+        </div>
+      </section>
+
+        <!-- Reference Voice Card (Browser Voice Matching) -->
+        <div class="card control-section ref-voice-card" id="refVoiceCard">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🎤</span>
+              <h2 class="card-title">Reference Voice Match</h2>
+            </div>
+          </div>
+
+          <!-- Honest Capability Disclaimer -->
+          <div class="voice-match-disclaimer">
+            ℹ️ Browser voices can't copy an exact voice. They match the clip's pitch, pace, pauses, expression, gender and language.
+          </div>
+
+          <!-- Drag and Drop Audio Input -->
+          <div id="voiceDropzone" class="voice-dropzone" tabindex="0" role="button" aria-label="Drop reference audio clip here">
+            <div class="dropzone-icon">🎙️</div>
+            <div class="dropzone-text" id="dropzoneText">Drop 3–30s audio clip or click to browse</div>
+            <div class="dropzone-sub">Supports .wav, .mp3, .m4a, .webm, .weba, .ogg, .opus, .flac</div>
+            <input type="file" id="voiceFileInput" accept=".wav,.mp3,.m4a,.webm,.weba,.ogg,.opus,.flac" style="display: none;">
+          </div>
+
+          <!-- Mic Record + Voice Name Row -->
+          <div class="voice-input-actions">
+            <button id="micRecordBtn" class="mic-btn" title="Record reference speech from microphone (up to 15s)">
+              <span class="record-dot"></span>
+              <span id="micRecordText">Record Mic (15s)</span>
+            </button>
+            <input type="text" id="voiceNameInput" class="input-text" placeholder="Voice Label (e.g. Maya)" value="My Reference Voice" style="flex: 1;">
+          </div>
+
+          <!-- Analysis Progress -->
+          <div id="analysisProgress" class="analysis-progress-bar" style="display: none;">
+            <div id="analysisProgressFill" class="analysis-progress-fill" style="width: 0%;"></div>
+            <span id="analysisProgressText" class="analysis-progress-text">Analyzing… 0%</span>
+          </div>
+
+          <div style="margin-top: 0.65rem; display: flex; gap: 0.5rem;">
+            <button id="analyzeVoiceBtn" class="btn btn-primary btn-sm" style="flex: 1;" disabled>
+              ⚡ Analyze &amp; Auto-Match
+            </button>
+            <button id="rematchClipBtn" class="btn-rematch" title="Restore all sliders to auto-matched clip values" style="display: none;">
+              ↺ Re-match
+            </button>
+          </div>
+
+          <!-- Profile Biometric Fingerprint Display -->
+          <div id="profileFingerprintPanel" style="display: none; margin-top: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Acoustic Profile Fingerprint</span>
+              <span id="qualityScoreBadge" class="quality-score-badge high">Score: 92/100</span>
+            </div>
+
+            <div class="profile-stats-grid">
+              <div class="profile-stat-box">
+                <div class="stat-label-tiny">Pitch (F0)</div>
+                <div id="statF0" class="stat-value-prominent">228 Hz</div>
+              </div>
+              <div class="profile-stat-box">
+                <div class="stat-label-tiny">Syllable Pace</div>
+                <div id="statSps" class="stat-value-prominent">5.1 sps</div>
+              </div>
+              <div class="profile-stat-box">
+                <div class="stat-label-tiny">Expressive</div>
+                <div id="statExpressiveness" class="stat-value-prominent">90%</div>
+              </div>
+            </div>
+
+            <!-- Voice Type Safe-Zone Panel & 3-Way Toggle (Fix 2) -->
+            <div class="voice-type-panel" id="voiceTypePanel">
+              <div class="voice-type-header">
+                <span class="voice-type-label" id="voiceTypeLabel">Voice type: Female (auto, 92%)</span>
+                <div class="gender-toggle-group" id="clipGenderToggleGroup" role="group" aria-label="Clip Gender Selection">
+                  <button type="button" class="btn-gender-toggle active" data-gender="auto" id="genderToggleAuto">Auto</button>
+                  <button type="button" class="btn-gender-toggle" data-gender="male" id="genderToggleMale">Male</button>
+                  <button type="button" class="btn-gender-toggle" data-gender="female" id="genderToggleFemale">Female</button>
+                </div>
+              </div>
+              <div id="voiceTypeUncertainNotice" class="alert-banner warning" style="display: none; margin-top: 0.35rem; font-size: 0.74rem;">
+                ⚠️ Not sure if this is a male or female voice — please choose.
+              </div>
+            </div>
+
+            <!-- Calibrated Voice Stats readout (Fix 4) -->
+            <div id="voiceCalibStatsBanner" class="voice-calib-banner" style="display: none;">
+              <span id="voiceCalibStatsText">Voice base 118 Hz · pitch response k=0.92 · 4.6 syl/s</span>
+            </div>
+
+            <!-- Auto-Selected Voice Match Reason -->
+            <div id="matchedVoiceReason" class="matched-voice-reason" style="display: none;"></div>
+
+            <!-- Gender Mismatch Warning Banner (Fix 3) -->
+            <div id="genderMismatchWarning" class="alert-banner warning" style="display: none; margin-top: 0.4rem; font-size: 0.75rem;">
+              <span class="alert-icon">⚠️</span>
+              <span id="genderMismatchText">No male Hindi voice installed — results will sound female.</span>
+            </div>
+
+            <!-- A/B Comparison Player -->
+            <div id="abCompareContainer" class="ab-compare-container">
+              <button id="playOriginalRefBtn" class="ab-btn" title="Listen to the original reference clip">
+                ▶ Original Clip
+              </button>
+              <button id="playBrowserMatchBtn" class="ab-btn" title="Speak editor text using the auto-matched browser voice">
+                ▶ Browser Match
+              </button>
+            </div>
+
+            <div id="profileWarningsList" style="margin-top: 0.4rem; font-size: 0.72rem; color: var(--accent-amber);"></div>
+          </div>
+        </div>
+
+        <!-- Voice Selector Section -->
+        <div class="card control-section">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🗣️</span>
+              <h2 class="card-title">Voice Selection</h2>
+            </div>
+            <button id="previewVoiceBtn" class="btn btn-secondary btn-sm" title="Preview selected voice">
+              ▶ Preview
+            </button>
+          </div>
+
+          <!-- Voice Filter & Search & Speak-in Language -->
+          <div class="voice-search-row">
+            <input type="text" id="voiceSearchInput" class="input-text" placeholder="Search voices...">
+            <label class="checkbox-label" title="Show voices from all languages">
+              <input type="checkbox" id="showAllLangToggle">
+              <span>All Languages</span>
+            </label>
+          </div>
+
+          <div class="speak-lang-row">
+            <label for="speakLanguageSelect" class="speak-lang-label">Speak in:</label>
+            <select id="speakLanguageSelect" class="select-dropdown-sm">
+              <option value="auto">Auto (Detect from text)</option>
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="en-IN">English (India)</option>
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+            </select>
+          </div>
+
+          <!-- Voice Select Dropdown + Gender Override + Calibrate Button -->
+          <div class="voice-dropdown-wrapper" style="display: flex; gap: 0.4rem; align-items: center;">
+            <select id="voiceSelect" class="select-dropdown" style="flex: 1;" aria-label="Choose speaking voice">
+              <option value="">Discovering voices...</option>
+            </select>
+            <button type="button" id="voiceGenderOverrideBtn" class="btn-voice-override" title="Manual gender override for this voice (Auto ➔ ♀ ➔ ♂)">
+              <span id="voiceGenderOverrideIcon">♀/♂</span>
+            </button>
+            <button type="button" id="calibrateVoiceBtn" class="btn-calibrate-voice" title="🎯 Calibrate this voice: measure base F0, pitch response (k) and syllable speed">
+              🎯 Calibrate
+            </button>
+          </div>
+
+          <!-- Calibration Progress Banner (Fix 4) -->
+          <div id="calibrationProgress" class="alert-banner info" style="display: none; margin-top: 0.4rem; font-size: 0.74rem;">
+            <span class="alert-icon">🎯</span>
+            <span id="calibrationProgressText">Calibrating voice pitch and speed response…</span>
+          </div>
+
+          <!-- Cloud Voice Modulation Warning Badge -->
+          <div id="cloudVoiceWarning" class="alert-banner warning" style="display: none;">
+            <span class="alert-icon">⚠️</span>
+            <span>This cloud voice has limited modulation support in Chrome. For expressive pitch changes, choose a local or Microsoft Natural voice.</span>
+          </div>
+        </div>
+
+        <!-- Emotion & Tone Presets -->
+        <div class="card control-section">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🎭</span>
+              <h2 class="card-title">Tone & Emotion Presets</h2>
+            </div>
+            <button id="openSavePresetBtn" class="btn btn-secondary btn-sm" title="Save current settings as custom preset">
+              + Save Preset
+            </button>
+          </div>
+          <p class="section-desc">Applies synchronized pitch, pace, pauses, and expressive prosody contours.</p>
+          <div id="presetsContainer" class="presets-grid">
+            <!-- Dynamically populated via presets.js -->
+          </div>
+        </div>
+
+        <!-- Master Humanize Engine Control -->
+        <div class="card control-section humanize-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🧬</span>
+              <h2 class="card-title">Humanize Engine</h2>
+            </div>
+            <label class="switch-toggle" title="Enable or disable natural inflection curves and declination">
+              <input type="checkbox" id="humanizeMasterToggle" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <p class="section-desc">Enables question pitch rise (?), exclamation power (!), sentence declination, and micro-delays.</p>
+          
+          <div class="control-row">
+            <div class="control-label-group">
+              <label for="humanizeIntensitySlider">Engine Intensity <span id="chipIntensity" class="badge-auto" style="display: none;">AUTO</span></label>
+              <span id="humanizeIntensityValue" class="slider-val">80%</span>
+            </div>
+            <input type="range" id="humanizeIntensitySlider" min="0" max="1" step="0.05" value="0.8">
+          </div>
+        </div>
+
+        <!-- Manual Modulation Sliders -->
+        <div class="card control-section">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🎛️</span>
+              <h2 class="card-title">Modulation & Fine Pacing</h2>
+            </div>
+          </div>
+
+          <div class="sliders-list">
+            <!-- Pitch -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="pitchSlider">Pitch (Base Frequency) <span id="chipPitch" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="pitchValue" class="slider-val">1.00</span>
+                  <button id="resetPitchBtn" class="btn-reset" title="Reset Pitch">↺</button>
+                </div>
+              </div>
+              <input type="range" id="pitchSlider" min="0.5" max="1.8" step="0.02" value="1.0" data-default="1.0">
+            </div>
+
+            <!-- Rate / Speed -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="rateSlider">Speed / Rate <span id="chipSpeed" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="rateValue" class="slider-val">1.00x</span>
+                  <button id="resetRateBtn" class="btn-reset" title="Reset Rate">↺</button>
+                </div>
+              </div>
+              <input type="range" id="rateSlider" min="0.5" max="2.0" step="0.05" value="1.0" data-default="1.0">
+
+              <!-- Speed Quick Buttons -->
+              <div class="speed-quick-row">
+                <div class="speed-quick-buttons">
+                  <button class="btn-speed-pill" data-speed="0.75">0.75x</button>
+                  <button class="btn-speed-pill active" data-speed="1.0">1.0x</button>
+                  <button class="btn-speed-pill" data-speed="1.25">1.25x</button>
+                  <button class="btn-speed-pill" data-speed="1.5">1.5x</button>
+                  <button class="btn-speed-pill" data-speed="2.0">2.0x</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Volume -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="volumeSlider">Volume</label>
+                <div class="val-reset">
+                  <span id="volumeValue" class="slider-val">100%</span>
+                  <button id="resetVolumeBtn" class="btn-reset" title="Reset Volume">↺</button>
+                </div>
+              </div>
+              <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="1.0" data-default="1.0">
+            </div>
+
+            <!-- Pause Length -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="pauseSlider">Sentence Pause Length <span id="chipPause" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="pauseValue" class="slider-val">300ms</span>
+                  <button id="resetPauseBtn" class="btn-reset" title="Reset Pause">↺</button>
+                </div>
+              </div>
+              <input type="range" id="pauseSlider" min="0" max="1500" step="25" value="300" data-default="300">
+            </div>
+
+            <!-- Pitch Variation / Jitter -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="pitchVarSlider">Pitch Jitter (Variation) <span id="chipPitchVar" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="pitchVarValue" class="slider-val">12%</span>
+                  <button id="resetPitchVarBtn" class="btn-reset" title="Reset Pitch Jitter">↺</button>
+                </div>
+              </div>
+              <input type="range" id="pitchVarSlider" min="0" max="100" step="1" value="12" data-default="12">
+            </div>
+
+            <!-- Rate Variation / Jitter -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="rateVarSlider">Speed Jitter (Variation) <span id="chipRateVar" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="rateVarValue" class="slider-val">10%</span>
+                  <button id="resetRateVarBtn" class="btn-reset" title="Reset Speed Jitter">↺</button>
+                </div>
+              </div>
+              <input type="range" id="rateVarSlider" min="0" max="100" step="1" value="10" data-default="10">
+            </div>
+
+            <!-- Word Emphasis Strength -->
+            <div class="control-row">
+              <div class="control-label-group">
+                <label for="emphasisSlider">Emphasis Strength (*words*) <span id="chipEmphasis" class="badge-auto" style="display: none;">AUTO</span></label>
+                <div class="val-reset">
+                  <span id="emphasisValue" class="slider-val">40%</span>
+                  <button id="resetEmphasisBtn" class="btn-reset" title="Reset Emphasis">↺</button>
+                </div>
+              </div>
+              <input type="range" id="emphasisSlider" min="0" max="1" step="0.05" value="0.4" data-default="0.4">
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Save Custom Preset Modal -->
+    <div id="savePresetModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <h3 class="modal-title">Save Custom Preset</h3>
+        <p class="modal-desc">Saves all active sliders, prosody settings, and pacing parameters.</p>
+        <div class="modal-input-group">
+          <label for="presetNameInput">Preset Name</label>
+          <input type="text" id="presetNameInput" class="input-text" placeholder="e.g. Cinematic Podcast Host">
+        </div>
+        <div class="modal-actions">
+          <button id="cancelSavePresetBtn" class="btn btn-secondary">Cancel</button>
+          <button id="confirmSavePresetBtn" class="btn btn-primary">Save Preset</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export / Import Configuration Modal -->
+    <div id="configModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <h3 class="modal-title">Settings & Custom Presets</h3>
+        <p class="modal-desc">Export your fine-tuned settings as a JSON file or restore from a backup.</p>
+        <div class="config-actions">
+          <button id="exportConfigBtn" class="btn btn-primary">
+            📥 Download Configuration JSON
+          </button>
+          <label class="btn btn-secondary import-btn-label">
+            📤 Import JSON Backup
+            <input type="file" id="importConfigInput" accept=".json" style="display: none;">
+          </label>
+        </div>
+        <div class="modal-actions" style="margin-top: 1.5rem;">
+          <button id="closeConfigBtn" class="btn btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
